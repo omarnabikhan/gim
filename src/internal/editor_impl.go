@@ -17,6 +17,7 @@ const (
 
 	cColorHighlight  = "\u001b[32m"
 	cColorReset      = "\u001b[0m"
+	cColorDebug      = "\u001b[0;31m"
 	cAnsiClearScreen = "\033c"
 )
 
@@ -43,20 +44,20 @@ var _ src.Editor = (*editorImpl)(nil)
 
 func (e *editorImpl) Handle(ch rune) error {
 	switch ch {
-	case 'a':
+	case 'h':
 		if e.cursor.x == 0 {
 			break
 		}
 		e.cursor.x--
-	case 's':
+	case 'j':
 		// TODO(omar): move window if past max height
 		e.cursor.y++
-	case 'd':
+	case 'l':
 		if e.cursor.x >= cMaxWidth {
 			break
 		}
 		e.cursor.x++
-	case 'w':
+	case 'k':
 		if e.cursor.y == 0 {
 			break
 		}
@@ -106,12 +107,14 @@ func (e *editorImpl) updateWindow() {
 	}
 	if e.verbose {
 		// Print debug output.
-		bytes = append(bytes, []byte("DEBUG:")...)
-		bytes = append(bytes, []byte(fmt.Sprintf("contents is length %d", len(contents)))...)
+		bytes = append(bytes, []byte(cColorDebug)...)
+		bytes = append(bytes, []byte("DEBUG:\n")...)
+		bytes = append(bytes, []byte(fmt.Sprintf("contents is length %d\n", len(contents)))...)
 		for _, line := range contents {
 			bytes = append(bytes, []byte(string(line))...)
 			bytes = append(bytes, '\n')
 		}
+		bytes = append(bytes, []byte(cColorReset)...)
 	}
 	_, err := os.Stdout.Write(bytes)
 	if err != nil {
