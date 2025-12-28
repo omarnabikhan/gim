@@ -3,6 +3,7 @@ package main
 import (
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"os/signal"
 	"syscall"
@@ -57,13 +58,9 @@ func main() {
 	}()
 
 	for {
-		key := window.GetChar()
-		if gc.KeyString(key) == "q" {
+		err = editor.Handle(window.GetChar())
+		if err == io.EOF {
 			break
-		}
-		err = editor.Handle(key)
-		if err != nil {
-			panic(err)
 		}
 	}
 }

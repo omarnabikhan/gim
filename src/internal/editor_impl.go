@@ -10,12 +10,21 @@ import (
 	src "text_editor"
 )
 
+type EditorMode string
+
 const (
 	// rw-rw-rw-
 	cReadWriteFileMode = 0666
 
 	// Colors.
-	cDebugColor = 1
+	COLOR_DEBUG = 1
+
+	// Editor modes.
+	NORMAL_MODE EditorMode = "NORMAL"
+	INSERT_MODE EditorMode = "INSERT"
+
+	// Escape sequences.
+	ESC_KEY = "\x1B"
 )
 
 func NewEditor(window *gc.Window, filePath string, verbose bool) (src.Editor, error) {
@@ -23,9 +32,17 @@ func NewEditor(window *gc.Window, filePath string, verbose bool) (src.Editor, er
 	if err != nil {
 		return nil, err
 	}
-	e := &editorImpl{window: window, file: file, verbose: verbose}
 
-	gc.InitPair(cDebugColor, gc.C_RED, gc.C_BLACK)
+	fileContents := getFileContents(file)
+	e := &editorImpl{
+		window:       window,
+		file:         file,
+		fileContents: fileContents,
+		mode:         NORMAL_MODE,
+		verbose:      verbose,
+	}
+
+	gc.InitPair(COLOR_DEBUG, gc.C_RED, gc.C_BLACK)
 	// Initial update of window.
 	e.sync()
 	return e, nil
@@ -35,11 +52,9 @@ type editorImpl struct {
 	window *gc.Window
 	file   *os.File
 
-	// Immutable state.
-	maxHeight, maxWidth int
-
 	// Mutable state.
-	lineLengths      []int // How many chars on are on the ith line of the file.
+	mode             EditorMode
+	fileContents     []string // Each element is a line from the source file without ending in '\n'.
 	verbose          bool
 	cursorX, cursorY int
 }
@@ -47,7 +62,22 @@ type editorImpl struct {
 var _ src.Editor = (*editorImpl)(nil)
 
 func (e *editorImpl) Handle(key gc.Key) error {
+	defer e.sync()
+	switch e.mode {
+	case NORMAL_MODE:
+		return e.handleNormal(key)
+	case INSERT_MODE:
+		return e.handleInsert(key)
+	default:
+		return nil
+	}
+}
+
+func (e *editorImpl) handleNormal(key gc.Key) error {
 	switch k := gc.KeyString(key); k {
+	case "q":
+		e.Close()
+		return io.EOF
 	case "j":
 		e.moveCursorIncremental(1 /*dy*/, 0 /*dx*/)
 	case "k":
@@ -60,8 +90,28 @@ func (e *editorImpl) Handle(key gc.Key) error {
 		e.cursorX = 0
 	case "v":
 		e.verbose = !e.verbose
+	case "i":
+		// Before entering INSERT mode, we must fix the cursor x-pos.
+		e.cursorX = e.normalizeCursorX(e.cursorX)
+		e.mode = INSERT_MODE
 	}
-	e.sync()
+	return nil
+}
+
+func (e *editorImpl) handleInsert(key gc.Key) error {
+	ch := gc.KeyString(key)
+	if ch == ESC_KEY {
+		e.mode = NORMAL_MODE
+		return nil
+	}
+
+	lineToInsertInto := e.fileContents[e.cursorY]
+	newLine := strings.Builder{}
+	newLine.WriteString(lineToInsertInto[:e.cursorX])
+	newLine.WriteString(ch)
+	newLine.WriteString(lineToInsertInto[e.cursorX:])
+	e.fileContents[e.cursorY] = newLine.String()
+	e.cursorX += 1
 	return nil
 }
 
@@ -84,13 +134,14 @@ func (e *editorImpl) moveCursorIncremental(dy int, dx int) {
 // x-pos on shorter lines so that when we return to larger lines, the x-pos "pops" back to 30.
 func (e *editorImpl) moveCursor(newY int, newX int) {
 	maxY, maxX := e.window.MaxYX()
-	if newY < 0 || newY >= maxY || newY >= len(e.lineLengths) ||
+	if newY < 0 || newY >= maxY || newY >= len(e.fileContents) ||
 		newX < 0 || newX >= maxX {
 		// Don't go off-screen.
 		// Don't go past the last line in the file.
 		return
 	}
-	if newX >= e.lineLengths[newY] {
+	lineLength := len(e.fileContents[newY])
+	if newX >= lineLength {
 		// The newX is past the last char on the current line. That is valid (see the doc comment),
 		// though we don't want to go any further than we are now.
 		// So, if the x-pos is increasing, do not update it at all (set it to what it is currently).
@@ -98,7 +149,6 @@ func (e *editorImpl) moveCursor(newY int, newX int) {
 		// move it to the second-to-last instead of the last since the cursor is on the last char
 		// from user's perspective.
 		// Additionally, if the current line is empty, don't move it at all.
-		lineLength := e.lineLengths[newY]
 		if newX >= e.cursorX || lineLength == 0 {
 			newX = e.cursorX
 		} else {
@@ -111,17 +161,20 @@ func (e *editorImpl) moveCursor(newY int, newX int) {
 func (e *editorImpl) sync() {
 	defer e.window.Refresh()
 	defer func() {
-		newX := e.cursorX
-		if e.cursorX >= e.lineLengths[e.cursorY] {
-			// Special handling of x-position. See moveCursorInternal for details.
-			newX = e.lineLengths[e.cursorY] - 1
-		}
-		if newX < 0 {
-			newX = 0
-		}
-		e.window.Move(e.cursorY, newX)
+		e.window.Move(e.cursorY, e.normalizeCursorX(e.cursorX))
 	}()
 	e.updateWindow()
+}
+
+func (e *editorImpl) normalizeCursorX(x int) int {
+	if e.cursorX >= len(e.fileContents[e.cursorY]) {
+		// Special handling of x-position. See moveCursorInternal for details.
+		x = len(e.fileContents[e.cursorY]) - 1
+	}
+	if x < 0 {
+		x = 0
+	}
+	return x
 }
 
 func (e *editorImpl) updateWindow() {
@@ -131,12 +184,9 @@ func (e *editorImpl) updateWindow() {
 	maxY, maxX := e.window.MaxYX()
 	newWindow, _ := gc.NewWindow(maxY, maxX, windowY, windowX)
 
-	contents := e.getFileContents()
-	lineLengths := make([]int, len(contents))
 	for i := range maxY {
-		if i < len(contents) {
-			line := contents[i]
-			lineLengths[i] = len(line)
+		if i < len(e.fileContents) {
+			line := e.fileContents[i]
 			newWindow.Println(line)
 		} else if i != maxY-1 {
 			// There are no more file contents, so use a special UI to denote that these liens are
@@ -147,25 +197,25 @@ func (e *editorImpl) updateWindow() {
 			newWindow.AttrOff(gc.A_DIM)
 		}
 	}
-	e.lineLengths = lineLengths
 	e.window.Println()
 	if e.verbose {
 		// Print debug output.
-		newWindow.ColorOn(cDebugColor)
+		newWindow.ColorOn(COLOR_DEBUG)
 		newWindow.Println("DEBUG: ")
-		newWindow.Printf("file has %d lines; ", len(contents))
-		newWindow.Printf("current line has %d chars; ", len(contents[e.cursorY]))
-		newWindow.Printf("cursor is at (x=%d,y=%d)", e.cursorX, e.cursorY)
-		newWindow.ColorOff(cDebugColor)
+		newWindow.Printf("file length=%d lines; ", len(e.fileContents))
+		newWindow.Printf("current line length=%d chars; ", len(e.fileContents[e.cursorY]))
+		newWindow.Printf("cursor at (x=%d,y=%d); ", e.cursorX, e.cursorY)
+		newWindow.Printf("mode=%s", e.mode)
+		newWindow.ColorOff(COLOR_DEBUG)
 	}
 	e.window.Overwrite(newWindow)
 }
 
 // Each string is the entire row. The row does NOT contain the ending newline.
-func (e *editorImpl) getFileContents() []string {
+func getFileContents(file *os.File) []string {
 	// Make sure file is being read from beginning.
-	e.file.Seek(0 /*offset*/, io.SeekStart)
-	contents, err := io.ReadAll(e.file)
+	file.Seek(0 /*offset*/, io.SeekStart)
+	contents, err := io.ReadAll(file)
 	if err != nil {
 		panic(err)
 	}
