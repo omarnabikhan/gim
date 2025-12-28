@@ -121,18 +121,12 @@ func (e *editorImpl) sync() {
 		}
 		e.window.Move(e.cursorY, newX)
 	}()
-	// Will clear the STDOUT file and write whatever is viewable.
 	e.clearDisplay()
 	e.updateWindow()
-	//e.updateWindowStub()
 }
 
 func (e *editorImpl) clearDisplay() {
 	e.window.Erase()
-}
-
-func (e *editorImpl) updateWindowStub() {
-	e.window.Print("dummy")
 }
 
 func (e *editorImpl) updateWindow() {
@@ -144,8 +138,10 @@ func (e *editorImpl) updateWindow() {
 			line := contents[i]
 			lineLengths[i] = len(line)
 			e.window.Println(line)
-		} else {
-			// Empty lines get special UI.
+		} else if i != maxY-1 {
+			// There are no more file contents, so use a special UI to denote that these liens are
+			// not present in the file. We do not do that on the last line, as the last line is used
+			// for debug output.
 			e.window.AttrOn(gc.A_DIM)
 			e.window.Println("~")
 			e.window.AttrOff(gc.A_DIM)
