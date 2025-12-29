@@ -19,9 +19,13 @@ const (
 	cReadWriteFileMode = 0666
 
 	// Colors.
-	COLOR_DEBUG   = 1
-	COLOR_DEFAULT = 2
-	COLOR_BG      = 100
+	COLOR_DEFAULT = 100
+	COLOR_DEBUG   = 101
+	COLOR_BG      = 102
+
+	// Color pairs.
+	COLOR_PAIR_DEBUG   = 1
+	COLOR_PAIR_DEFAULT = 2
 
 	// Editor modes.
 	NORMAL_MODE EditorMode = "NORMAL"
@@ -48,13 +52,12 @@ func NewEditor(window *gc.Window, filePath string, verbose bool) (src.Editor, er
 		userMsg:      file.Name(),
 	}
 
-	// Brighten the white and red a bit.
-	gc.InitColor(gc.C_WHITE, 900, 900, 900)
-	gc.InitColor(gc.C_RED, 887, 113, 63)
-
+	gc.InitColor(COLOR_DEFAULT, 900, 900, 900)
+	gc.InitColor(COLOR_DEBUG, 887, 113, 63)
 	gc.InitColor(COLOR_BG, 170, 170, 170)
-	gc.InitPair(COLOR_DEBUG, gc.C_RED, COLOR_BG)
-	gc.InitPair(COLOR_DEFAULT, gc.C_WHITE, COLOR_BG)
+
+	gc.InitPair(COLOR_PAIR_DEBUG, COLOR_DEBUG, COLOR_BG)
+	gc.InitPair(COLOR_PAIR_DEFAULT, COLOR_DEFAULT, COLOR_BG)
 
 	// Initial update of window.
 	e.sync()
@@ -290,6 +293,7 @@ func (e *editorImpl) updateWindow() {
 	windowY, windowX := e.window.YX()
 	maxY, maxX := e.window.MaxYX()
 	newWindow, _ := gc.NewWindow(maxY, maxX, windowY, windowX)
+	newWindow.SetBackground(COLOR_PAIR_DEFAULT)
 	for i := range maxY {
 		if i < len(e.fileContents) {
 			line := e.fileContents[i]
@@ -304,22 +308,21 @@ func (e *editorImpl) updateWindow() {
 			newWindow.AttrOff(gc.A_DIM)
 		}
 	}
-	e.window.Println()
 	if e.verbose {
 		// Print debug output.
-		newWindow.ColorOn(COLOR_DEBUG)
+		newWindow.ColorOn(COLOR_PAIR_DEBUG)
 		newWindow.Print("DEBUG: ")
 		newWindow.Printf("file length=%d lines; ", len(e.fileContents))
 		newWindow.Printf("current line length=%d chars; ", len(e.fileContents[e.cursorY]))
 		newWindow.Printf("cursor at (x=%d,y=%d); ", e.cursorX, e.cursorY)
 		newWindow.Printf("mode=%s", e.mode)
 		newWindow.Println()
-		newWindow.ColorOff(COLOR_DEBUG)
+		newWindow.ColorOff(COLOR_PAIR_DEBUG)
 	}
 	newWindow.Println(e.userMsg)
 
 	e.window.Erase()
-	e.window.SetBackground(gc.ColorPair(COLOR_DEFAULT))
+	e.window.SetBackground(gc.ColorPair(COLOR_PAIR_DEFAULT))
 	e.window.Overlay(newWindow)
 }
 

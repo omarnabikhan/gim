@@ -1,7 +1,6 @@
 There is some content in here
 Even on this line!
 not-blank
-also
 
 omar just edited this line
 
