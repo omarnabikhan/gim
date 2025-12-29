@@ -36,6 +36,7 @@ func Main() {
 	window, _ := gc.Init()
 	defer gc.End()
 
+	window.Keypad(true)
 	gc.Echo(false)
 	gc.CBreak(true)
 	gc.StartColor()

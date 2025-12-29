@@ -98,19 +98,19 @@ func (e *editorImpl) Handle(key gc.Key) error {
 
 func (e *editorImpl) handleNormal(key gc.Key) error {
 	switch k := gc.KeyString(key); k {
-	case "j":
+	case "j", "down":
 		// Move the cursor down.
 		e.moveCursorVertical(1)
 		return nil
-	case "k":
+	case "k", "up":
 		// Move the cursor up.
 		e.moveCursorVertical(-1)
 		return nil
-	case "l":
+	case "l", "right":
 		// Move the cursor right.
 		e.moveCursorHorizontal(1)
 		return nil
-	case "h":
+	case "h", "left":
 		// Move the cursor left.
 		e.moveCursorHorizontal(-1)
 		return nil
@@ -122,14 +122,13 @@ func (e *editorImpl) handleNormal(key gc.Key) error {
 		// Move the cursor to the highest position without scrolling.
 		e.cursorY = 0
 		return nil
+	case "M":
+		// Move the cursor to the middle of the screen without scrolling.
+		e.cursorY = e.normalizeCursorY(e.getMaxYForContent() / 2)
+		return nil
 	case "L":
 		// Move the cursor to the lowest valid position without scrolling.
-		newY := e.getMaxYForContent()
-		if newY+e.fileLineOffset >= len(e.fileContents) {
-			// Special case: we ran out of file. Instead, move the cursor to the last line of the file.
-			newY = len(e.fileContents) - e.fileLineOffset - 1
-		}
-		e.cursorY = newY
+		e.cursorY = e.normalizeCursorY(e.getMaxYForContent())
 		return nil
 	case "v":
 		// Toggle verbose mode.
@@ -171,6 +170,7 @@ func (e *editorImpl) handleNormal(key gc.Key) error {
 		return nil
 	default:
 		// Do nothing.
+		e.userMsg = fmt.Sprintf("unrecognized key %s", k)
 		return nil
 	}
 }
@@ -222,7 +222,12 @@ func (e *editorImpl) moveCursorHorizontal(dx int) {
 		return
 	}
 	lineLength := len(e.fileContents[e.getCurrLineInd()])
-	if newX >= lineLength {
+	// Here is a difference between valid cursor x-pos in NORMAL vs INSERT mode:
+	// - In NORMAL mode, the x-pos must be a valid char position: meaning, a valid offset.
+	// - In INSERT mode, the x-pos must be a valid position _to insert_ a char. Practically speaking,
+	//   in INSERT mode, the x-pos may be equal to the length of the current line (since we may
+	//   insert a new char here).
+	if newX >= lineLength && e.mode == NORMAL_MODE {
 		// The newX is past the last char on the current line. That is valid (see the doc comment),
 		// though we don't want to go any further than we are now.
 		// So, if the x-pos is increasing, do not update it at all (set it to what it is currently).
@@ -235,6 +240,9 @@ func (e *editorImpl) moveCursorHorizontal(dx int) {
 		} else {
 			newX = lineLength - 2
 		}
+	}
+	if newX > lineLength && e.mode == INSERT_MODE {
+		return
 	}
 	e.cursorX = newX
 }
@@ -326,7 +334,24 @@ func (e *editorImpl) deleteChar() {
 func (e *editorImpl) insertChar(ch string) {
 	currLineInd := e.getCurrLineInd()
 	currLine := e.fileContents[currLineInd]
-	if ch == "enter" {
+	switch ch {
+	case "down":
+		// Move the cursor down.
+		e.moveCursorVertical(1)
+		return
+	case "up":
+		// Move the cursor up.
+		e.moveCursorVertical(-1)
+		return
+	case "right":
+		// Move the cursor right.
+		e.moveCursorHorizontal(1)
+		return
+	case "left":
+		// Move the cursor left.
+		e.moveCursorHorizontal(-1)
+		return
+	case "enter":
 		// Upon pressing the "enter" key, the current line is split before and after the x-pos of
 		// the cursor, and:
 		// 1. The "before" part stays on the current line.
@@ -469,6 +494,14 @@ func (e *editorImpl) normalizeCursorX(x int) int {
 		x = 0
 	}
 	return x
+}
+
+func (e *editorImpl) normalizeCursorY(y int) int {
+	if y+e.fileLineOffset >= len(e.fileContents) {
+		// Special case: we ran out of file. Instead, move the cursor to the last line of the file.
+		y = len(e.fileContents) - e.fileLineOffset - 1
+	}
+	return y
 }
 
 func (e *editorImpl) getCurrLineInd() int {
