@@ -71,7 +71,7 @@ type editorImpl struct {
 
 	// Mutable state.
 	fileContents     []string // Each element is a line from the source file without ending in '\n'.
-	fileLineOffset   int      // Which line of the file is being shown on the top of the screen.
+	fileLineOffset   int      // Which line of the file is being shown at the top of the screen.
 	userMsg          string   // Shown to user at bottom of screen.
 	mode             EditorMode
 	verbose          bool
@@ -124,25 +124,28 @@ func (e *editorImpl) handleNormal(key gc.Key) error {
 		return nil
 	case "o":
 		// Insert an empty line after the current line, and swap to INSERT mode.
+		currLineInd := e.getCurrLineInd()
 		e.fileContents = append(
-			e.fileContents[:e.cursorY+1],
+			e.fileContents[:currLineInd+1],
 			append(
 				[]string{""},
-				e.fileContents[e.cursorY+1:]...,
+				e.fileContents[currLineInd+1:]...,
 			)...,
 		)
-		e.cursorY += 1
+		e.moveCursorVertical(1)
 		e.swapToInsertMode()
 		return nil
 	case "O":
 		// Insert an empty line before the current line, and swap to INSERT mode.
+		currLineInd := e.getCurrLineInd()
 		e.fileContents = append(
-			e.fileContents[:e.cursorY],
+			e.fileContents[:currLineInd],
 			append(
 				[]string{""},
-				e.fileContents[e.cursorY:]...,
+				e.fileContents[currLineInd:]...,
 			)...,
 		)
+		//e.moveCursorVertical(-1)
 		e.swapToInsertMode()
 		return nil
 	case "i":
@@ -166,10 +169,28 @@ func (e *editorImpl) swapToInsertMode() {
 
 func (e *editorImpl) moveCursorVertical(dy int) {
 	newY := e.cursorY + dy
-	if newY < 0 || newY >= len(e.fileContents) {
-		// Don't go past the first or last line in the file.
+	numLinesInFile := len(e.fileContents)
+
+	// Validation to prevent scrolling past file contents.
+	if newY+e.fileLineOffset < 0 {
+		// Nothing to scroll up to.
+		return
+	} else if newY+e.fileLineOffset >= numLinesInFile {
+		// Nothing to scroll down to.
 		return
 	}
+
+	// Handle valid scrolling.
+	if newY < 0 {
+		// Scroll up one line.
+		e.fileLineOffset -= 1
+		newY = 0
+	} else if newY >= e.getMaxYForContent() {
+		e.fileLineOffset += 1
+		// Keep the cursor on the same line (the last line).
+		newY = e.getMaxYForContent() - 1
+	}
+	// Else, we're within the displayed content and can simply update the y-pos.
 	e.cursorY = newY
 }
 
@@ -181,7 +202,10 @@ func (e *editorImpl) moveCursorVertical(dy int) {
 // x-pos on shorter lines so that when we return to larger lines, the x-pos "pops" back to 30.
 func (e *editorImpl) moveCursorHorizontal(dx int) {
 	newX := e.cursorX + dx
-	lineLength := len(e.fileContents[e.cursorY])
+	if newX < 0 {
+		return
+	}
+	lineLength := len(e.fileContents[e.getCurrLineInd()])
 	if newX >= lineLength {
 		// The newX is past the last char on the current line. That is valid (see the doc comment),
 		// though we don't want to go any further than we are now.
@@ -250,8 +274,9 @@ func (e *editorImpl) handleInsert(key gc.Key) error {
 
 // Handle the user inputting the delete key.
 func (e *editorImpl) deleteChar() {
-	currLine := e.fileContents[e.cursorY]
-	if e.cursorX == 0 && e.cursorY == 0 {
+	currLineInd := e.getCurrLineInd()
+	currLine := e.fileContents[currLineInd]
+	if e.cursorX == 0 && currLineInd == 0 {
 		// Do nothing.
 		return
 	}
@@ -262,14 +287,14 @@ func (e *editorImpl) deleteChar() {
 		// 2. Delete the current line (modify number of lines in file).
 		// 3. Decrement the cursor's y-pos by 1.
 		// 4. Update the cursor's x-pos to be whatever the end of the previous line was.
-		prevLine := e.fileContents[e.cursorY-1]
+		prevLine := e.fileContents[currLineInd-1]
 		newLine := strings.Builder{}
 		newLine.WriteString(prevLine)
 		newLine.WriteString(currLine)
 		// Replace the previous line.
-		e.fileContents[e.cursorY-1] = newLine.String()
+		e.fileContents[currLineInd-1] = newLine.String()
 		// Remove the current line.
-		e.fileContents = append(e.fileContents[:e.cursorY], e.fileContents[e.cursorY+1:]...)
+		e.fileContents = append(e.fileContents[:currLineInd], e.fileContents[currLineInd+1:]...)
 		e.cursorY -= 1
 		e.cursorX = len(prevLine)
 		return
@@ -277,13 +302,14 @@ func (e *editorImpl) deleteChar() {
 	newLine := strings.Builder{}
 	newLine.WriteString(currLine[:e.cursorX-1])
 	newLine.WriteString(currLine[e.cursorX:])
-	e.fileContents[e.cursorY] = newLine.String()
+	e.fileContents[currLineInd] = newLine.String()
 	e.cursorX -= 1
 }
 
 // Handle the user inputting the ch key.
 func (e *editorImpl) insertChar(ch string) {
-	currLine := e.fileContents[e.cursorY]
+	currLineInd := e.getCurrLineInd()
+	currLine := e.fileContents[currLineInd]
 	if ch == "enter" {
 		// Upon pressing the "enter" key, the current line is split before and after the x-pos of
 		// the cursor, and:
@@ -292,10 +318,10 @@ func (e *editorImpl) insertChar(ch string) {
 		// 3. The cursor's x-pos becomes 0.
 		// 4. The cursor's y-pos is incremented by 1.
 		before, after := currLine[:e.cursorX], currLine[e.cursorX:]
-		e.fileContents[e.cursorY] = before
+		e.fileContents[currLineInd] = before
 		e.fileContents = append(
-			e.fileContents[:e.cursorY+1],
-			append([]string{after}, e.fileContents[e.cursorY+1:]...)...,
+			e.fileContents[:currLineInd+1],
+			append([]string{after}, e.fileContents[currLineInd+1:]...)...,
 		)
 		e.cursorX = 0
 		e.cursorY += 1
@@ -305,7 +331,7 @@ func (e *editorImpl) insertChar(ch string) {
 	newLine.WriteString(currLine[:e.cursorX])
 	newLine.WriteString(ch)
 	newLine.WriteString(currLine[e.cursorX:])
-	e.fileContents[e.cursorY] = newLine.String()
+	e.fileContents[currLineInd] = newLine.String()
 	e.cursorX += 1
 }
 
@@ -328,10 +354,10 @@ func (e *editorImpl) updateWindow() {
 	maxY, maxX := e.window.MaxYX()
 	newWindow, _ := gc.NewWindow(maxY, maxX, windowY, windowX)
 	newWindow.SetBackground(COLOR_PAIR_DEFAULT)
-	for i := range maxY - 2 {
+	for i := range e.getMaxYForContent() {
 		// We reserve the bottom 2 lines for user messages, and debug messages.
-		if i < len(e.fileContents) {
-			line := e.fileContents[i]
+		if i+e.fileLineOffset < len(e.fileContents) {
+			line := e.fileContents[e.fileLineOffset+i]
 			newWindow.Println(line)
 		} else if (e.verbose && i < maxY-2) || (!e.verbose && i < maxY-1) {
 			// There are no more file contents, so use a special UI to denote that these lines are
@@ -347,10 +373,11 @@ func (e *editorImpl) updateWindow() {
 		// Print debug output.
 		newWindow.ColorOn(COLOR_PAIR_DEBUG)
 		newWindow.Print("DEBUG: ")
-		newWindow.Printf("build version %s; ", build_version.GetVersion())
-		newWindow.Printf("file length=%d lines; ", len(e.fileContents))
-		newWindow.Printf("current line length=%d chars; ", len(e.fileContents[e.cursorY]))
-		newWindow.Printf("cursor at (x=%d,y=%d); ", e.cursorX, e.cursorY)
+		newWindow.Printf("build=%s; ", build_version.GetVersion())
+		newWindow.Printf("file len=%d lines; ", len(e.fileContents))
+		newWindow.Printf("curr line len=%d chars; ", len(e.fileContents[e.getCurrLineInd()]))
+		newWindow.Printf("curr line offset=%d lines; ", e.fileLineOffset)
+		newWindow.Printf("cursor=(x=%d,y=%d); ", e.cursorX, e.cursorY)
 		newWindow.Printf("mode=%s", e.mode)
 		newWindow.Println()
 		newWindow.ColorOff(COLOR_PAIR_DEBUG)
@@ -367,14 +394,24 @@ func (e *editorImpl) updateWindow() {
 
 func (e *editorImpl) normalizeCursorX(x int) int {
 	// In INSERT mode, it's expected for the cursor to be equal to the length of the current line.
-	if e.mode == NORMAL_MODE && e.cursorX >= len(e.fileContents[e.cursorY]) {
+	if e.mode == NORMAL_MODE && e.cursorX >= len(e.fileContents[e.getCurrLineInd()]) {
 		// Special handling of x-position. See moveCursorInternal for details.
-		x = len(e.fileContents[e.cursorY]) - 1
+		x = len(e.fileContents[e.getCurrLineInd()]) - 1
 	}
 	if x < 0 {
 		x = 0
 	}
 	return x
+}
+
+func (e *editorImpl) getCurrLineInd() int {
+	return e.fileLineOffset + e.cursorY
+}
+
+func (e *editorImpl) getMaxYForContent() int {
+	maxY, _ := e.window.MaxYX()
+	// We reserve the bottom 2 lines for debug and user messages.
+	return maxY - 2
 }
 
 // Each string is the entire row. The row does NOT contain the ending newline.
