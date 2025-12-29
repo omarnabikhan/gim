@@ -118,6 +118,19 @@ func (e *editorImpl) handleNormal(key gc.Key) error {
 		// Move the cursor to the beginning of the current line.
 		e.cursorX = 0
 		return nil
+	case "H":
+		// Move the cursor to the highest position without scrolling.
+		e.cursorY = 0
+		return nil
+	case "L":
+		// Move the cursor to the lowest valid position without scrolling.
+		newY := e.getMaxYForContent() - 1
+		if newY+e.fileLineOffset >= len(e.fileContents) {
+			// Special case: we ran out of file. Instead, move the cursor to the last line of the file.
+			newY = len(e.fileContents) - e.fileLineOffset - 1
+		}
+		e.cursorY = newY
+		return nil
 	case "v":
 		// Toggle verbose mode.
 		e.verbose = !e.verbose
