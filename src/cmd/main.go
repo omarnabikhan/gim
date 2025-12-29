@@ -1,4 +1,4 @@
-package main
+package cmd
 
 import (
 	"flag"
@@ -13,7 +13,7 @@ import (
 	"github.com/omarnabikhan/text_editor/src/internal"
 )
 
-func main() {
+func Main() {
 	filePath := ""
 	verbose := false
 	help := false
