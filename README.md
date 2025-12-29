@@ -33,8 +33,8 @@ I initially started out using basic STDIN and STDOUT manipulation, but quickly m
 is a very primitive library (written in C) to make TUI (terminal UIs). I'm using a Go port of it (and under the hood, that just uses CGO to actually call
 the raw C library calls) so it's pretty efficient.
 
-More and more, I get confused on if my program is running, or if VIM is running. So far, this project has just been me implementing VIM features, but I'm
-going to challenge myself to come up with features not in VIM that I think are useful and implement them.
+More and more, I get confused on if my program is running, or if Vim is running. So far, this project has just been me implementing VIM features, but I'm
+going to challenge myself to come up with features not in Vim that I think are useful and implement them.
 
 The most painful thing so far has been using Colors.
 
