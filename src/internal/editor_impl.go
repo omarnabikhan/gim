@@ -100,19 +100,19 @@ func (e *editorImpl) handleNormal(key gc.Key) error {
 		return io.EOF
 	case "j":
 		// Move the cursor down.
-		e.moveCursorIncremental(1 /*dy*/, 0 /*dx*/)
+		e.moveCursorVertical(1)
 		return nil
 	case "k":
 		// Move the cursor up.
-		e.moveCursorIncremental(-1 /*dy*/, 0 /*dx*/)
+		e.moveCursorVertical(-1)
 		return nil
 	case "l":
 		// Move the cursor right.
-		e.moveCursorIncremental(0 /*dy*/, 1 /*dx*/)
+		e.moveCursorHorizontal(1)
 		return nil
 	case "h":
 		// Move the cursor left.
-		e.moveCursorIncremental(0 /*dy*/, -1 /*dx*/)
+		e.moveCursorHorizontal(-1)
 		return nil
 	case "0":
 		// Move the cursor to the beginning of the current line.
@@ -164,31 +164,24 @@ func (e *editorImpl) swapToInsertMode() {
 	e.userMsg = "-- INSERT --"
 }
 
-func (e *editorImpl) moveCursorIncremental(dy int, dx int) {
-	e.moveCursor(e.cursorY+dy, e.cursorX+dx)
+func (e *editorImpl) moveCursorVertical(dy int) {
+	newY := e.cursorY + dy
+	if newY < 0 || newY >= len(e.fileContents) {
+		// Don't go past the first or last line in the file.
+		return
+	}
+	e.cursorY = newY
 }
 
-// moveCursor handles the validation of the new cursor location, and applies safeguards if the cursor
-// is attempted to be moved to an invalid position.
-//
 // The cursor's x-position that is stored here is not the actual position the cursor occupies. Instead,
 // it's treated as the max possible position it may occupy, limited by the current line's length.
 // For example, say the current line has 40 chars, and the cursor's x-pos is 30. If the cursor moves
 // to a line with fewer chars, say 10, the stored x-pos is still 30, even though the cursor would
 // actually occupy an x-pos of 9 (the max possible on a line of length 10). This is to preserve the
 // x-pos on shorter lines so that when we return to larger lines, the x-pos "pops" back to 30.
-func (e *editorImpl) moveCursor(newY int, newX int) {
-	maxY, maxX := e.window.MaxYX()
-	if newY >= maxY {
-		panic("oops")
-	}
-	if newY < 0 || newY >= maxY || newY >= len(e.fileContents) ||
-		newX < 0 || newX >= maxX {
-		// Don't go off-screen.
-		// Don't go past the last line in the file.
-		return
-	}
-	lineLength := len(e.fileContents[newY])
+func (e *editorImpl) moveCursorHorizontal(dx int) {
+	newX := e.cursorX + dx
+	lineLength := len(e.fileContents[e.cursorY])
 	if newX >= lineLength {
 		// The newX is past the last char on the current line. That is valid (see the doc comment),
 		// though we don't want to go any further than we are now.
@@ -203,10 +196,12 @@ func (e *editorImpl) moveCursor(newY int, newX int) {
 			newX = lineLength - 2
 		}
 	}
-	e.cursorY, e.cursorX = newY, newX
+	e.cursorX = newX
 }
 
 // Write the contents of the in-memory file to disc.
+// TODO(omar): Very simple implementation of clear the file, then overwrite full contents. We can do
+// better if we know that only some small portion of the file needs to change.
 func (e *editorImpl) writeToDisc() error {
 	defer e.file.Sync()
 
