@@ -24,3 +24,10 @@ Now, you can just use it however you'd use vim.
 ```sh
 $ gim <someFile>
 ```
+
+Development
+--
+Assuming you've cloned this repo and are in the root directory, run the `build_dev.sh` script to build the binary locally and add it to your PATH:
+```
+$ ./build_dev.sh
+```
