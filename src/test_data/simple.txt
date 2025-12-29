@@ -3,5 +3,7 @@ Even on this line!
 not-blank
 also
 
+omar just edited this line
+
 And that is a blank line
 And now, we have the longest line in the file.

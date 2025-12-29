@@ -1,6 +1,8 @@
 package internal
 
 import (
+	"bytes"
+	"fmt"
 	"io"
 	"os"
 	"strings"
@@ -41,6 +43,7 @@ func NewEditor(window *gc.Window, filePath string, verbose bool) (src.Editor, er
 		fileContents: fileContents,
 		mode:         NORMAL_MODE,
 		verbose:      verbose,
+		userMsg:      file.Name(),
 	}
 
 	gc.InitPair(COLOR_DEBUG, gc.C_RED, gc.C_BLACK)
@@ -58,6 +61,7 @@ type editorImpl struct {
 	fileContents     []string // Each element is a line from the source file without ending in '\n'.
 	verbose          bool
 	cursorX, cursorY int
+	userMsg          string // Shown to user at bottom of screen.
 }
 
 var _ src.Editor = (*editorImpl)(nil)
@@ -108,6 +112,7 @@ func (e *editorImpl) handleNormal(key gc.Key) error {
 		// Swap to INSERT mode.
 		e.cursorX = e.normalizeCursorX(e.cursorX)
 		e.mode = INSERT_MODE
+		e.userMsg = "-- INSERT --"
 		return nil
 	case "w":
 		// Write the contents of the in-memory buffer to disc.
@@ -157,8 +162,22 @@ func (e *editorImpl) moveCursor(newY int, newX int) {
 	e.cursorY, e.cursorX = newY, newX
 }
 
+// Write the contents of the in-memory file to disc.
 func (e *editorImpl) writeToDisc() error {
-	// TODO(omar): implement
+	defer e.file.Sync()
+	e.file.Seek(0 /*offset*/, io.SeekStart)
+	// We collect in a []byte and do a single write for efficiency.
+	contents := bytes.Buffer{}
+	for _, line := range e.fileContents {
+		contents.WriteString(line)
+		contents.WriteString("\n")
+	}
+	n, err := e.file.Write(contents.Bytes())
+	if err != nil {
+		return err
+	}
+	// Update the display to say we wrote to disc.
+	e.userMsg = fmt.Sprintf("%d bytes written to disc", n)
 	return nil
 }
 
@@ -170,6 +189,7 @@ func (e *editorImpl) handleInsert(key gc.Key) error {
 		// Swapping decrements the x-pos by 1.
 		e.mode = NORMAL_MODE
 		e.cursorX = e.normalizeCursorX(e.cursorX - 1)
+		e.userMsg = ""
 		return nil
 	case DELETE_KEY:
 		// Delete the char before the cursor.
@@ -266,10 +286,11 @@ func (e *editorImpl) updateWindow() {
 		if i < len(e.fileContents) {
 			line := e.fileContents[i]
 			newWindow.Println(line)
-		} else if i != maxY-1 {
-			// There are no more file contents, so use a special UI to denote that these liens are
-			// not present in the file. We do not do that on the last line, as the last line is used
-			// for debug output.
+		} else if (e.verbose && i < maxY-2) || (!e.verbose && i < maxY-1) {
+			// There are no more file contents, so use a special UI to denote that these lines are
+			// not present in the file.
+			// We need to reserve either 1 or 2 lines without this UI treatment. 1 if there is no
+			// debug message, 2 otherwise.
 			newWindow.AttrOn(gc.A_DIM)
 			newWindow.Println("~")
 			newWindow.AttrOff(gc.A_DIM)
@@ -279,13 +300,15 @@ func (e *editorImpl) updateWindow() {
 	if e.verbose {
 		// Print debug output.
 		newWindow.ColorOn(COLOR_DEBUG)
-		newWindow.Println("DEBUG: ")
+		newWindow.Print("DEBUG: ")
 		newWindow.Printf("file length=%d lines; ", len(e.fileContents))
 		newWindow.Printf("current line length=%d chars; ", len(e.fileContents[e.cursorY]))
 		newWindow.Printf("cursor at (x=%d,y=%d); ", e.cursorX, e.cursorY)
 		newWindow.Printf("mode=%s", e.mode)
+		newWindow.Println()
 		newWindow.ColorOff(COLOR_DEBUG)
 	}
+	newWindow.Println(e.userMsg)
 	e.window.Overwrite(newWindow)
 }
 
