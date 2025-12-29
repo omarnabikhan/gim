@@ -43,3 +43,10 @@ This README has become more of a blog. Maybe I'll update it in a future commit, 
 On contributions
 --
 No AI code here. This whole thing is a fun side-project to me, so productivity isn't something I'm thinking about.
+
+Status
+--
+I've implemented the basic functionality. Now, there are 3 main (large) projects to do:
+1. Implement proper Vimish. I've realized my Vimish is not very good, so I'm reading https://irian.to/blogs/mastering-vim-grammar to get better.
+2. Syntax highlighting. Right now, the text is just white on grey.
+3. Optimizations. This is a never-ending project, of course, and I'm not too worried about the performance for now. So this comes last.
