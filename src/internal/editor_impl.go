@@ -19,7 +19,9 @@ const (
 	cReadWriteFileMode = 0666
 
 	// Colors.
-	COLOR_DEBUG = 1
+	COLOR_DEBUG   = 1
+	COLOR_DEFAULT = 2
+	COLOR_BG      = 100
 
 	// Editor modes.
 	NORMAL_MODE EditorMode = "NORMAL"
@@ -46,7 +48,14 @@ func NewEditor(window *gc.Window, filePath string, verbose bool) (src.Editor, er
 		userMsg:      file.Name(),
 	}
 
-	gc.InitPair(COLOR_DEBUG, gc.C_RED, gc.C_BLACK)
+	// Brighten the white and red a bit.
+	gc.InitColor(gc.C_WHITE, 900, 900, 900)
+	gc.InitColor(gc.C_RED, 887, 113, 63)
+
+	gc.InitColor(COLOR_BG, 170, 170, 170)
+	gc.InitPair(COLOR_DEBUG, gc.C_RED, COLOR_BG)
+	gc.InitPair(COLOR_DEFAULT, gc.C_WHITE, COLOR_BG)
+
 	// Initial update of window.
 	e.sync()
 	return e, nil
@@ -281,7 +290,6 @@ func (e *editorImpl) updateWindow() {
 	windowY, windowX := e.window.YX()
 	maxY, maxX := e.window.MaxYX()
 	newWindow, _ := gc.NewWindow(maxY, maxX, windowY, windowX)
-
 	for i := range maxY {
 		if i < len(e.fileContents) {
 			line := e.fileContents[i]
@@ -309,7 +317,10 @@ func (e *editorImpl) updateWindow() {
 		newWindow.ColorOff(COLOR_DEBUG)
 	}
 	newWindow.Println(e.userMsg)
-	e.window.Overwrite(newWindow)
+
+	e.window.Erase()
+	e.window.SetBackground(gc.ColorPair(COLOR_DEFAULT))
+	e.window.Overlay(newWindow)
 }
 
 func (e *editorImpl) normalizeCursorX(x int) int {
