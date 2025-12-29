@@ -22,7 +22,7 @@ $ go install github.com/omarnabikhan/gim
 
 Now, you can just use it however you'd use vim.
 ```sh
-$ gim <someFile>
+$ gim someFile
 ```
 
 Development
@@ -33,3 +33,4 @@ the executable to GOBIN
 ```
 $ ./build_dev.sh
 ```
+`
