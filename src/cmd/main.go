@@ -47,7 +47,7 @@ func Main() {
 	}
 	defer editor.Close()
 
-	// Also cleanup on process exit.
+	// Also cleanup on interrupts.
 	go func() {
 		signalChan := make(chan os.Signal, 1)
 		signal.Notify(signalChan, syscall.SIGKILL, syscall.SIGINT, syscall.SIGTERM)

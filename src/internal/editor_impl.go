@@ -170,8 +170,8 @@ func (e *editorImpl) handleNormal(key gc.Key) error {
 		return nil
 	case ":":
 		// Swap to CMD mode.
+		e.userMsg = ""
 		e.mode = COMMAND_MODE
-		e.userMsg = ":"
 		return nil
 	default:
 		// Do nothing.
@@ -386,27 +386,28 @@ func (e *editorImpl) handleCommand(key gc.Key) error {
 	switch ch {
 	case ESC_KEY:
 		// Cancel the command.
-		e.userMsg = ""
+		e.commandBuffer.Reset()
 		e.mode = NORMAL_MODE
 		return nil
 	case DELETE_KEY:
 		// Delete the last char in the command. If the command is empty, then swap to NORMAL mode too.
-		if len(e.userMsg) == 1 {
-			e.userMsg = ""
+		if e.commandBuffer.Len() == 0 {
 			e.mode = NORMAL_MODE
 			return nil
 		}
-		e.userMsg = e.userMsg[:len(e.userMsg)-1]
+		cmd := e.commandBuffer.String()
+		e.commandBuffer.Reset()
+		e.commandBuffer.WriteString(cmd[:len(cmd)-1])
 		return nil
 	case "enter":
 		// Trim the beginning ":"
-		command := e.userMsg[1:]
-		e.userMsg = ""
+		command := e.commandBuffer.String()
+		e.commandBuffer.Reset()
 		defer func() { e.mode = NORMAL_MODE }()
 		return e.handleCommandEntered(command)
 	default:
 		// Just add to command buffer.
-		e.userMsg += ch
+		e.commandBuffer.WriteString(ch)
 		return nil
 	}
 }
@@ -436,7 +437,7 @@ func (e *editorImpl) sync() {
 		if e.mode == COMMAND_MODE {
 			// Overwrite whatever the cursorY and cursorX are to show the cursor at the bottom of
 			// the screen.
-			e.window.Move(e.getMaxYForContent()+2, len(e.userMsg))
+			e.window.Move(e.getMaxYForContent()+2, e.commandBuffer.Len()+1)
 		} else {
 			e.window.Move(e.cursorY, e.normalizeCursorX(e.cursorX))
 		}
@@ -482,7 +483,12 @@ func (e *editorImpl) updateWindow() {
 		// Print a newline anyways so no shifts when user toggles verbosity.
 		newWindow.Println()
 	}
-	newWindow.Println(e.userMsg)
+	if e.mode == COMMAND_MODE {
+		// Print the command, preceded by ":"
+		newWindow.Printf(":%s\n", e.commandBuffer.String())
+	} else {
+		newWindow.Println(e.userMsg)
+	}
 
 	e.window.Erase()
 	e.window.SetBackground(gc.ColorPair(COLOR_PAIR_DEFAULT))
