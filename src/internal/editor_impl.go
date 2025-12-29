@@ -120,11 +120,21 @@ func (e *editorImpl) handleNormal(key gc.Key) error {
 		// Toggle verbose mode.
 		e.verbose = !e.verbose
 		return nil
+	case "o":
+		// Insert an empty line after the current line, and swap to INSERT mode.
+		e.fileContents = append(
+			e.fileContents[:e.cursorY+1],
+			append(
+				[]string{""},
+				e.fileContents[e.cursorY+1:]...,
+			)...,
+		)
+		e.cursorY += 1
+		e.swapToInsertMode()
+		return nil
 	case "i":
 		// Swap to INSERT mode.
-		e.cursorX = e.normalizeCursorX(e.cursorX)
-		e.mode = INSERT_MODE
-		e.userMsg = "-- INSERT --"
+		e.swapToInsertMode()
 		return nil
 	case "w":
 		// Write the contents of the in-memory buffer to disc.
@@ -133,6 +143,12 @@ func (e *editorImpl) handleNormal(key gc.Key) error {
 		// Do nothing.
 		return nil
 	}
+}
+
+func (e *editorImpl) swapToInsertMode() {
+	e.cursorX = e.normalizeCursorX(e.cursorX)
+	e.mode = INSERT_MODE
+	e.userMsg = "-- INSERT --"
 }
 
 func (e *editorImpl) moveCursorIncremental(dy int, dx int) {
