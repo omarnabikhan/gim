@@ -115,13 +115,7 @@ func (e *editorImpl) handleInsert(key gc.Key) error {
 	}
 }
 
-// Delete the character BEFORE the cursor position, and decrement the x-position by one.
-// If the cursor is at the beginning of the line (x-pos = 0) and not on the first line (y-pos > 0),
-// this is a special case and we:
-// 1. Copy the entire contents of that line to the previous line.
-// 2. Delete the current line (modify number of lines in file).
-// 3. Decrement the cursor's y-pos by 1.
-// 4. Update the cursor's x-pos to be whatever the end of the previous line was.
+// Handle the user inputting the delete key.
 func (e *editorImpl) deleteChar() {
 	currLine := e.fileContents[e.cursorY]
 	if e.cursorX == 0 && e.cursorY == 0 {
@@ -129,7 +123,12 @@ func (e *editorImpl) deleteChar() {
 		return
 	}
 	if e.cursorX == 0 {
-		// Special case. See docstring.
+		// If the cursor is at the beginning of the line (x-pos = 0) and not on the first line
+		// (y-pos > 0), this is a special case and we:
+		// 1. Copy the entire contents of that line to the previous line.
+		// 2. Delete the current line (modify number of lines in file).
+		// 3. Decrement the cursor's y-pos by 1.
+		// 4. Update the cursor's x-pos to be whatever the end of the previous line was.
 		prevLine := e.fileContents[e.cursorY-1]
 		newLine := strings.Builder{}
 		newLine.WriteString(prevLine)
@@ -149,13 +148,30 @@ func (e *editorImpl) deleteChar() {
 	e.cursorX -= 1
 }
 
-// Insert the character at the position of the cursor, and increment the x-position by one.
+// Handle the user inputting the ch key.
 func (e *editorImpl) insertChar(ch string) {
-	lineToInsertInto := e.fileContents[e.cursorY]
+	currLine := e.fileContents[e.cursorY]
+	if ch == "enter" {
+		// Upon pressing the "enter" key, the current line is split before and after the x-pos of
+		// the cursor, and:
+		// 1. The "before" part stays on the current line.
+		// 2. The "after" part (includes cursor's x-pos) is pushed to a new.
+		// 3. The cursor's x-pos becomes 0.
+		// 4. The cursor's y-pos is incremented by 1.
+		before, after := currLine[:e.cursorX], currLine[e.cursorX:]
+		e.fileContents[e.cursorY] = before
+		e.fileContents = append(
+			e.fileContents[:e.cursorY+1],
+			append([]string{after}, e.fileContents[e.cursorY+1:]...)...,
+		)
+		e.cursorX = 0
+		e.cursorY += 1
+		return
+	}
 	newLine := strings.Builder{}
-	newLine.WriteString(lineToInsertInto[:e.cursorX])
+	newLine.WriteString(currLine[:e.cursorX])
 	newLine.WriteString(ch)
-	newLine.WriteString(lineToInsertInto[e.cursorX:])
+	newLine.WriteString(currLine[e.cursorX:])
 	e.fileContents[e.cursorY] = newLine.String()
 	e.cursorX += 1
 }
