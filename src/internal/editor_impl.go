@@ -49,10 +49,15 @@ func NewEditor(window *gc.Window, filePath string, verbose bool) (src.Editor, er
 		window:       window,
 		file:         file,
 		fileContents: fileContents,
+		userMsg:      fmt.Sprintf(`file "%s" %dL %dB`, file.Name(), len(fileContents), lengthBytes),
 		mode:         NORMAL_MODE,
 		verbose:      verbose,
-		userMsg:      fmt.Sprintf(`file "%s" %dL %dB`, file.Name(), len(fileContents), lengthBytes),
 	}
+
+	// Register the supported modes.
+	e.normalModeEditor = &normalModeEditor{editorImpl: e}
+	e.insertModeEditor = &insertModeEditor{editorImpl: e}
+	e.commandModeEditor = &commandModeEditor{editorImpl: e}
 
 	gc.InitColor(COLOR_DEFAULT, 900, 900, 900)
 	gc.InitColor(COLOR_DEBUG, 887, 113, 63)
@@ -70,14 +75,25 @@ type editorImpl struct {
 	window *gc.Window
 	file   *os.File
 
-	// Mutable state.
-	fileContents     []string // Each element is a line from the source file without ending in '\n'.
-	fileLineOffset   int      // Which line of the file is being shown at the top of the screen.
-	userMsg          string   // Shown to user at bottom of screen.
-	mode             EditorMode
-	verbose          bool
+	// Textual elements shown to user.
+	fileContents  []string // Each element is a line from the source file without ending in '\n'.
+	userMsg       string   // Shown to user at bottom of screen.
+	commandBuffer strings.Builder
+
+	// The cursorX is not necessarily the column which the cursor occupies. See the moveCursorHorizontal
+	// function for more details.
+	// The cursorY does indeed mark which row on the window that the cursor occupies.
 	cursorX, cursorY int
-	commandBuffer    strings.Builder
+	fileLineOffset   int // Which line of the file is being shown at the top of the screen.
+
+	// Mode info.
+	mode    EditorMode
+	verbose bool
+
+	// Different modes are implemented here.
+	normalModeEditor  src.Editor
+	insertModeEditor  src.Editor
+	commandModeEditor src.Editor
 }
 
 var _ src.Editor = (*editorImpl)(nil)
@@ -86,96 +102,12 @@ func (e *editorImpl) Handle(key gc.Key) error {
 	defer e.sync()
 	switch e.mode {
 	case NORMAL_MODE:
-		return e.handleNormal(key)
+		return e.normalModeEditor.Handle(key)
 	case INSERT_MODE:
-		return e.handleInsert(key)
+		return e.insertModeEditor.Handle(key)
 	case COMMAND_MODE:
-		return e.handleCommand(key)
+		return e.commandModeEditor.Handle(key)
 	default:
-		return nil
-	}
-}
-
-func (e *editorImpl) handleNormal(key gc.Key) error {
-	switch k := gc.KeyString(key); k {
-	case "j", "down":
-		// Move the cursor down.
-		e.moveCursorVertical(1)
-		return nil
-	case "k", "up":
-		// Move the cursor up.
-		e.moveCursorVertical(-1)
-		return nil
-	case "l", "right":
-		// Move the cursor right.
-		e.moveCursorHorizontal(1)
-		return nil
-	case "h", "left":
-		// Move the cursor left.
-		e.moveCursorHorizontal(-1)
-		return nil
-	case "0":
-		// Move the cursor to the beginning of the current line.
-		e.cursorX = 0
-		return nil
-	case "H":
-		// Move the cursor to the highest position without scrolling.
-		e.cursorY = 0
-		return nil
-	case "M":
-		// Move the cursor to the middle of the screen without scrolling.
-		e.cursorY = e.normalizeCursorY(e.getMaxYForContent() / 2)
-		return nil
-	case "L":
-		// Move the cursor to the lowest valid position without scrolling.
-		e.cursorY = e.normalizeCursorY(e.getMaxYForContent())
-		return nil
-	case "v":
-		// Toggle verbose mode.
-		e.verbose = !e.verbose
-		return nil
-	case "o":
-		// Insert an empty line after the current line, and swap to INSERT mode.
-		currLineInd := e.getCurrLineInd()
-		e.fileContents = append(
-			e.fileContents[:currLineInd+1],
-			append(
-				[]string{""},
-				e.fileContents[currLineInd+1:]...,
-			)...,
-		)
-		e.moveCursorVertical(1)
-		e.swapToInsertMode()
-		return nil
-	case "O":
-		// Insert an empty line before the current line, and swap to INSERT mode.
-		currLineInd := e.getCurrLineInd()
-		e.fileContents = append(
-			e.fileContents[:currLineInd],
-			append(
-				[]string{""},
-				e.fileContents[currLineInd:]...,
-			)...,
-		)
-		e.swapToInsertMode()
-		return nil
-	case "a":
-		// Swap to INSERT mode, and increment the cursor's x-pos.
-		e.swapToInsertMode()
-		e.moveCursorHorizontal(1)
-		return nil
-	case "i":
-		// Swap to INSERT mode.
-		e.swapToInsertMode()
-		return nil
-	case ":":
-		// Swap to CMD mode.
-		e.userMsg = ""
-		e.mode = COMMAND_MODE
-		return nil
-	default:
-		// Do nothing.
-		e.userMsg = fmt.Sprintf("unrecognized key %s", k)
 		return nil
 	}
 }
@@ -278,153 +210,6 @@ func (e *editorImpl) writeToDisc() error {
 	// Update the display to say we wrote to disc.
 	e.userMsg = fmt.Sprintf("%d bytes written to disc", n)
 	return nil
-}
-
-func (e *editorImpl) handleInsert(key gc.Key) error {
-	ch := gc.KeyString(key)
-	switch ch {
-	case ESC_KEY:
-		// Swap to NORMAL model
-		// Swapping decrements the x-pos by 1.
-		e.mode = NORMAL_MODE
-		e.cursorX = e.normalizeCursorX(e.cursorX - 1)
-		e.userMsg = ""
-		return nil
-	case DELETE_KEY:
-		// Delete the char before the cursor.
-		e.deleteChar()
-		return nil
-	default:
-		// Insert a char at the cursor.
-		e.insertChar(ch)
-		return nil
-	}
-}
-
-// Handle the user inputting the delete key.
-func (e *editorImpl) deleteChar() {
-	currLineInd := e.getCurrLineInd()
-	currLine := e.fileContents[currLineInd]
-	if e.cursorX == 0 && currLineInd == 0 {
-		// Do nothing.
-		return
-	}
-	if e.cursorX == 0 {
-		// If the cursor is at the beginning of the line (x-pos = 0) and not on the first line
-		// (y-pos > 0), this is a special case and we:
-		// 1. Copy the entire contents of that line to the previous line.
-		// 2. Delete the current line (modify number of lines in file).
-		// 3. Decrement the cursor's y-pos by 1.
-		// 4. Update the cursor's x-pos to be whatever the end of the previous line was.
-		prevLine := e.fileContents[currLineInd-1]
-		newLine := strings.Builder{}
-		newLine.WriteString(prevLine)
-		newLine.WriteString(currLine)
-		// Replace the previous line.
-		e.fileContents[currLineInd-1] = newLine.String()
-		// Remove the current line.
-		e.fileContents = append(e.fileContents[:currLineInd], e.fileContents[currLineInd+1:]...)
-		e.moveCursorVertical(-1)
-		e.cursorX = len(prevLine)
-		return
-	}
-	newLine := strings.Builder{}
-	newLine.WriteString(currLine[:e.cursorX-1])
-	newLine.WriteString(currLine[e.cursorX:])
-	e.fileContents[currLineInd] = newLine.String()
-	e.moveCursorHorizontal(-1)
-}
-
-// Handle the user inputting the ch key.
-func (e *editorImpl) insertChar(ch string) {
-	currLineInd := e.getCurrLineInd()
-	currLine := e.fileContents[currLineInd]
-	switch ch {
-	case "down":
-		// Move the cursor down.
-		e.moveCursorVertical(1)
-		return
-	case "up":
-		// Move the cursor up.
-		e.moveCursorVertical(-1)
-		return
-	case "right":
-		// Move the cursor right.
-		e.moveCursorHorizontal(1)
-		return
-	case "left":
-		// Move the cursor left.
-		e.moveCursorHorizontal(-1)
-		return
-	case "enter":
-		// Upon pressing the "enter" key, the current line is split before and after the x-pos of
-		// the cursor, and:
-		// 1. The "before" part stays on the current line.
-		// 2. The "after" part (includes cursor's x-pos) is pushed to a new.
-		// 3. The cursor's x-pos becomes 0.
-		// 4. The cursor's y-pos is incremented by 1.
-		before, after := currLine[:e.cursorX], currLine[e.cursorX:]
-		e.fileContents[currLineInd] = before
-		e.fileContents = append(
-			e.fileContents[:currLineInd+1],
-			append([]string{after}, e.fileContents[currLineInd+1:]...)...,
-		)
-		e.cursorX = 0
-		e.moveCursorVertical(1)
-		return
-	}
-	newLine := strings.Builder{}
-	newLine.WriteString(currLine[:e.cursorX])
-	newLine.WriteString(ch)
-	newLine.WriteString(currLine[e.cursorX:])
-	e.fileContents[currLineInd] = newLine.String()
-	e.moveCursorHorizontal(1)
-}
-
-func (e *editorImpl) handleCommand(key gc.Key) error {
-	ch := gc.KeyString(key)
-	switch ch {
-	case ESC_KEY:
-		// Cancel the command.
-		e.commandBuffer.Reset()
-		e.mode = NORMAL_MODE
-		return nil
-	case DELETE_KEY:
-		// Delete the last char in the command. If the command is empty, then swap to NORMAL mode too.
-		if e.commandBuffer.Len() == 0 {
-			e.mode = NORMAL_MODE
-			return nil
-		}
-		cmd := e.commandBuffer.String()
-		e.commandBuffer.Reset()
-		e.commandBuffer.WriteString(cmd[:len(cmd)-1])
-		return nil
-	case "enter":
-		// Trim the beginning ":"
-		command := e.commandBuffer.String()
-		e.commandBuffer.Reset()
-		defer func() { e.mode = NORMAL_MODE }()
-		return e.handleCommandEntered(command)
-	default:
-		// Just add to command buffer.
-		e.commandBuffer.WriteString(ch)
-		return nil
-	}
-}
-
-func (e *editorImpl) handleCommandEntered(command string) error {
-	switch command {
-	case "w":
-		// Write the contents of the in-memory buffer to disc, and s
-		return e.writeToDisc()
-	case "q":
-		// Quit the program.
-		e.Close()
-		return io.EOF
-	default:
-		e.userMsg = fmt.Sprintf("unrecognized command: %s", command)
-		return nil
-	}
 }
 
 func (e *editorImpl) Close() {
