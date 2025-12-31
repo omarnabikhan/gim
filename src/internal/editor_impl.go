@@ -102,16 +102,14 @@ func (e *editorImpl) Handle(key gc.Key) error {
 }
 
 func (e *editorImpl) swapEditorMode(mode Mode) {
+	e.mode = mode
 	switch mode {
 	case NORMAL_MODE:
-		e.mode = mode
 		e.activeEditorMode = newNormalEditorMode(e)
 	case INSERT_MODE:
-		e.mode = INSERT_MODE
 		e.userMsg = "-- INSERT --"
 		e.activeEditorMode = newInsertEditorMode(e)
 	case COMMAND_MODE:
-		e.mode = COMMAND_MODE
 		e.userMsg = ":"
 		e.activeEditorMode = newCommandEditorMode(e, e.cursorY, e.cursorX)
 	}
@@ -154,26 +152,26 @@ func (e *editorImpl) moveCursorVertical(dy int) {
 // x-pos on shorter lines so that when we return to larger lines, the x-pos "pops" back to 30.
 func (e *editorImpl) moveCursorHorizontal(dx int, pastLastCharAllowed bool) {
 	newX := e.cursorX + dx
-	// Here is a difference between valid cursor x-pos in NORMAL vs INSERT mode:
-	// - In NORMAL mode, the x-pos must be a valid char position: meaning, a valid offset.
-	// - In INSERT mode, the x-pos must be a valid position _to insert_ a char. Practically speaking,
-	//   in INSERT mode, the x-pos may be equal to the length of the current line (since we may
-	//   insert a new char here).
 	if dx < 0 {
 		_, actualCursorX := e.activeEditorMode.GetCursorYX()
 		// Move the cursor one to the left from the user's perspective
 		newX = actualCursorX - 1
-	}
-	lineLength := len(e.fileContents[e.getCurrLineInd()])
-	if newX >= lineLength {
-		// The newX is past the last char on the current line. That is valid (see the doc comment),
-		// though we don't want to go any further than we are now.
-		// So, if the x-pos is increasing, do not update it at all (set it to what it is currently).
-		// Additionally, if the current line is empty, don't move it at all.
-		if pastLastCharAllowed {
-			newX = lineLength
-		} else {
-			newX = lineLength - 1
+	} else {
+		lineLength := len(e.fileContents[e.getCurrLineInd()])
+		if newX >= lineLength {
+			// Here is a difference between valid cursor x-pos in NORMAL vs INSERT mode:
+			// - In NORMAL mode, the x-pos must be a valid char position: meaning, a valid offset.
+			// - In INSERT mode, the x-pos must be a valid position _to insert_ a char. Practically speaking,
+			//   in INSERT mode, the x-pos may be equal to the length of the current line (since we may
+			//   insert a new char here).
+			//
+			// So, if the x-pos is past the current line, we cap it out as either the length of the
+			// line, or length minus 1 (depending on INSERT/NORMAL mode).
+			if pastLastCharAllowed {
+				newX = lineLength
+			} else {
+				newX = lineLength - 1
+			}
 		}
 	}
 	if newX < 0 {
@@ -181,18 +179,6 @@ func (e *editorImpl) moveCursorHorizontal(dx int, pastLastCharAllowed bool) {
 	}
 	e.cursorX = newX
 }
-
-// Virtual cursor x-pos is a concept just for normal mode. This is to support jumping around
-// lines of varying lengths, while maintaining the column throughout it all.
-//
-// E.g. The user is on a line of length 100 and on x-pos 80.
-// Now, the user moves down to a short line, say length 50. The cursor cannot occupy x-pos 80,
-// so it must now change to something reasonable: 29 in this case, as that's the last char on
-// the line. But now, if the user goes back up a line (or down to another long line), the cursor
-// should "jump back" to x-pos 80: not remain at 30.
-//
-// We accomplish this behaviour by using a "virtual" x-pos, which, in the above example, would
-// remain at 80 even when on the line of length 30.
 
 // Write the contents of the in-memory file to disc.
 // TODO(omar): Very simple implementation of clear the file, then overwrite full contents. We can do
