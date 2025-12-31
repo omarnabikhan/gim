@@ -6,6 +6,10 @@ import (
 	gc "github.com/gbin/goncurses"
 )
 
+func newNormalEditorMode(baseEditor *editorImpl) *normalModeEditor {
+	return &normalModeEditor{editorImpl: baseEditor}
+}
+
 type normalModeEditor struct {
 	*editorImpl
 }
@@ -22,11 +26,11 @@ func (ne *normalModeEditor) Handle(key gc.Key) error {
 		return nil
 	case "l", "right":
 		// Move the cursor right.
-		ne.moveCursorHorizontal(1)
+		ne.moveCursorHorizontal(1, false /*pastLastCharAllowed*/)
 		return nil
 	case "h", "left":
 		// Move the cursor left.
-		ne.moveCursorHorizontal(-1)
+		ne.moveCursorHorizontal(-1, false /*pastLastCharAllowed*/)
 		return nil
 	case "0":
 		// Move the cursor to the beginning of the current line.
@@ -59,7 +63,8 @@ func (ne *normalModeEditor) Handle(key gc.Key) error {
 			)...,
 		)
 		ne.moveCursorVertical(1)
-		ne.swapToInsertMode()
+		ne.cursorX = 0
+		ne.swapEditorMode(INSERT_MODE)
 		return nil
 	case "O":
 		// Insert an empty line before the current line, and swap to INSERT mode.
@@ -71,25 +76,43 @@ func (ne *normalModeEditor) Handle(key gc.Key) error {
 				ne.fileContents[currLineInd:]...,
 			)...,
 		)
-		ne.swapToInsertMode()
+		ne.cursorX = 0
+		ne.swapEditorMode(INSERT_MODE)
 		return nil
 	case "a":
 		// Swap to INSERT mode, and increment the cursor's x-pos.
-		ne.swapToInsertMode()
-		ne.moveCursorHorizontal(1)
+		ne.swapEditorMode(INSERT_MODE)
+		// pastLastChar is allowed since we're now in INSERT mode.
+		ne.moveCursorHorizontal(1, true /*pastLastCharAllowed*/)
 		return nil
 	case "i":
 		// Swap to INSERT mode.
-		ne.swapToInsertMode()
+		ne.swapEditorMode(INSERT_MODE)
 		return nil
 	case ":":
-		// Swap to CMD mode.
+		// Swap to COMMAND mode.
 		ne.userMsg = ""
-		ne.mode = COMMAND_MODE
+		ne.swapEditorMode(COMMAND_MODE)
 		return nil
 	default:
 		// Do nothing.
 		ne.userMsg = fmt.Sprintf("unrecognized key %s", k)
 		return nil
 	}
+}
+
+func (ne *normalModeEditor) GetCursorYX() (int, int) {
+	return ne.cursorY, ne.normalizeCursorX()
+}
+
+func (ne *normalModeEditor) normalizeCursorX() int {
+	x := ne.cursorX
+	if x >= len(ne.fileContents[ne.getCurrLineInd()]) {
+		// Special handling of x-position. See moveCursorInternal for details.
+		x = len(ne.fileContents[ne.getCurrLineInd()]) - 1
+	}
+	if x < 0 {
+		x = 0
+	}
+	return x
 }

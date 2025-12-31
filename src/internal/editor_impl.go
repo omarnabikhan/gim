@@ -13,7 +13,7 @@ import (
 	"github.com/omarnabikhan/gim/src/internal/build_version"
 )
 
-type EditorMode string
+type Mode string
 
 const (
 	// rw-rw-rw-
@@ -29,9 +29,9 @@ const (
 	COLOR_PAIR_DEFAULT = 2
 
 	// Editor modes.
-	NORMAL_MODE  EditorMode = "NORMAL"
-	INSERT_MODE  EditorMode = "INSERT"
-	COMMAND_MODE EditorMode = "COMMAND"
+	NORMAL_MODE  Mode = "NORMAL"
+	INSERT_MODE  Mode = "INSERT"
+	COMMAND_MODE Mode = "COMMAND"
 
 	// Escape sequences.
 	ESC_KEY    = "\x1b"
@@ -54,10 +54,8 @@ func NewEditor(window *gc.Window, filePath string, verbose bool) (src.Editor, er
 		verbose:      verbose,
 	}
 
-	// Register the supported modes.
-	e.normalModeEditor = &normalModeEditor{editorImpl: e}
-	e.insertModeEditor = &insertModeEditor{editorImpl: e}
-	e.commandModeEditor = &commandModeEditor{editorImpl: e}
+	// Initialize in NORMAL mode.
+	e.swapEditorMode(NORMAL_MODE)
 
 	gc.InitColor(COLOR_DEFAULT, 900, 900, 900)
 	gc.InitColor(COLOR_DEBUG, 887, 113, 63)
@@ -76,46 +74,47 @@ type editorImpl struct {
 	file   *os.File
 
 	// Textual elements shown to user.
-	fileContents  []string // Each element is a line from the source file without ending in '\n'.
-	userMsg       string   // Shown to user at bottom of screen.
-	commandBuffer strings.Builder
+	fileContents []string // Each element is a line from the source file without ending in '\n'.
+	userMsg      string   // Shown to user at bottom of screen.
 
 	// The cursorX is not necessarily the column which the cursor occupies. See the moveCursorHorizontal
 	// function for more details.
 	// The cursorY does indeed mark which row on the window that the cursor occupies.
-	cursorX, cursorY int
+	cursorY, cursorX int
 	fileLineOffset   int // Which line of the file is being shown at the top of the screen.
 
 	// Mode info.
-	mode    EditorMode
+	mode    Mode
 	verbose bool
 
 	// Different modes are implemented here.
-	normalModeEditor  src.Editor
-	insertModeEditor  src.Editor
-	commandModeEditor src.Editor
+	activeEditorMode EditorMode
 }
 
 var _ src.Editor = (*editorImpl)(nil)
 
 func (e *editorImpl) Handle(key gc.Key) error {
-	defer e.sync()
-	switch e.mode {
-	case NORMAL_MODE:
-		return e.normalModeEditor.Handle(key)
-	case INSERT_MODE:
-		return e.insertModeEditor.Handle(key)
-	case COMMAND_MODE:
-		return e.commandModeEditor.Handle(key)
-	default:
-		return nil
+	if err := e.activeEditorMode.Handle(key); err != nil {
+		return err
 	}
+	e.sync()
+	return nil
 }
 
-func (e *editorImpl) swapToInsertMode() {
-	e.cursorX = e.normalizeCursorX(e.cursorX)
-	e.mode = INSERT_MODE
-	e.userMsg = "-- INSERT --"
+func (e *editorImpl) swapEditorMode(mode Mode) {
+	switch mode {
+	case NORMAL_MODE:
+		e.mode = mode
+		e.activeEditorMode = newNormalEditorMode(e)
+	case INSERT_MODE:
+		e.mode = INSERT_MODE
+		e.userMsg = "-- INSERT --"
+		e.activeEditorMode = newInsertEditorMode(e)
+	case COMMAND_MODE:
+		e.mode = COMMAND_MODE
+		e.userMsg = ":"
+		e.activeEditorMode = newCommandEditorMode(e, e.cursorY, e.cursorX)
+	}
 }
 
 func (e *editorImpl) moveCursorVertical(dy int) {
@@ -153,36 +152,47 @@ func (e *editorImpl) moveCursorVertical(dy int) {
 // to a line with fewer chars, say 10, the stored x-pos is still 30, even though the cursor would
 // actually occupy an x-pos of 9 (the max possible on a line of length 10). This is to preserve the
 // x-pos on shorter lines so that when we return to larger lines, the x-pos "pops" back to 30.
-func (e *editorImpl) moveCursorHorizontal(dx int) {
+func (e *editorImpl) moveCursorHorizontal(dx int, pastLastCharAllowed bool) {
 	newX := e.cursorX + dx
-	if newX < 0 {
-		return
-	}
-	lineLength := len(e.fileContents[e.getCurrLineInd()])
 	// Here is a difference between valid cursor x-pos in NORMAL vs INSERT mode:
 	// - In NORMAL mode, the x-pos must be a valid char position: meaning, a valid offset.
 	// - In INSERT mode, the x-pos must be a valid position _to insert_ a char. Practically speaking,
 	//   in INSERT mode, the x-pos may be equal to the length of the current line (since we may
 	//   insert a new char here).
-	if newX >= lineLength && e.mode == NORMAL_MODE {
+	if dx < 0 {
+		_, actualCursorX := e.activeEditorMode.GetCursorYX()
+		// Move the cursor one to the left from the user's perspective
+		newX = actualCursorX - 1
+	}
+	lineLength := len(e.fileContents[e.getCurrLineInd()])
+	if newX >= lineLength {
 		// The newX is past the last char on the current line. That is valid (see the doc comment),
 		// though we don't want to go any further than we are now.
 		// So, if the x-pos is increasing, do not update it at all (set it to what it is currently).
-		// Otherwise, if it's decreasing, set it to the second-to-last char on the current line. We
-		// move it to the second-to-last instead of the last since the cursor is on the last char
-		// from user's perspective.
 		// Additionally, if the current line is empty, don't move it at all.
-		if newX >= e.cursorX || lineLength == 0 {
-			newX = e.cursorX
+		if pastLastCharAllowed {
+			newX = lineLength
 		} else {
-			newX = lineLength - 2
+			newX = lineLength - 1
 		}
 	}
-	if newX > lineLength && e.mode == INSERT_MODE {
-		return
+	if newX < 0 {
+		newX = 0
 	}
 	e.cursorX = newX
 }
+
+// Virtual cursor x-pos is a concept just for normal mode. This is to support jumping around
+// lines of varying lengths, while maintaining the column throughout it all.
+//
+// E.g. The user is on a line of length 100 and on x-pos 80.
+// Now, the user moves down to a short line, say length 50. The cursor cannot occupy x-pos 80,
+// so it must now change to something reasonable: 29 in this case, as that's the last char on
+// the line. But now, if the user goes back up a line (or down to another long line), the cursor
+// should "jump back" to x-pos 80: not remain at 30.
+//
+// We accomplish this behaviour by using a "virtual" x-pos, which, in the above example, would
+// remain at 80 even when on the line of length 30.
 
 // Write the contents of the in-memory file to disc.
 // TODO(omar): Very simple implementation of clear the file, then overwrite full contents. We can do
@@ -219,13 +229,7 @@ func (e *editorImpl) Close() {
 func (e *editorImpl) sync() {
 	defer e.window.Refresh()
 	defer func() {
-		if e.mode == COMMAND_MODE {
-			// Overwrite whatever the cursorY and cursorX are to show the cursor at the bottom of
-			// the screen.
-			e.window.Move(e.getMaxYForContent()+2, e.commandBuffer.Len()+1)
-		} else {
-			e.window.Move(e.cursorY, e.normalizeCursorX(e.cursorX))
-		}
+		e.window.Move(e.activeEditorMode.GetCursorYX())
 	}()
 	e.updateWindow()
 }
@@ -265,31 +269,14 @@ func (e *editorImpl) updateWindow() {
 		newWindow.Println()
 		newWindow.ColorOff(COLOR_PAIR_DEBUG)
 	} else {
-		// Print a newline anyways so no shifts when user toggles verbosity.
+		// Print a newline anyway so no shifts when user toggles verbosity.
 		newWindow.Println()
 	}
-	if e.mode == COMMAND_MODE {
-		// Print the command, preceded by ":"
-		newWindow.Printf(":%s\n", e.commandBuffer.String())
-	} else {
-		newWindow.Println(e.userMsg)
-	}
+	newWindow.Println(e.userMsg)
 
 	e.window.Erase()
 	e.window.SetBackground(gc.ColorPair(COLOR_PAIR_DEFAULT))
 	e.window.Overlay(newWindow)
-}
-
-func (e *editorImpl) normalizeCursorX(x int) int {
-	// In INSERT mode, it's expected for the cursor to be equal to the length of the current line.
-	if e.mode == NORMAL_MODE && e.cursorX >= len(e.fileContents[e.getCurrLineInd()]) {
-		// Special handling of x-position. See moveCursorInternal for details.
-		x = len(e.fileContents[e.getCurrLineInd()]) - 1
-	}
-	if x < 0 {
-		x = 0
-	}
-	return x
 }
 
 func (e *editorImpl) normalizeCursorY(y int) int {

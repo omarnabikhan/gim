@@ -6,6 +6,10 @@ import (
 	gc "github.com/gbin/goncurses"
 )
 
+func newInsertEditorMode(baseEditor *editorImpl) *insertModeEditor {
+	return &insertModeEditor{editorImpl: baseEditor}
+}
+
 type insertModeEditor struct {
 	*editorImpl
 }
@@ -13,22 +17,57 @@ type insertModeEditor struct {
 func (ie *insertModeEditor) Handle(key gc.Key) error {
 	ch := gc.KeyString(key)
 	switch ch {
+	case "down":
+		// Move the cursor down.
+		ie.moveCursorVertical(1)
+		return nil
+	case "up":
+		// Move the cursor up.
+		ie.moveCursorVertical(-1)
+		return nil
+	case "right":
+		// Move the cursor right.
+		ie.moveCursorHorizontal(1, true /*pastLastCharAllowed*/)
+		return nil
+	case "left":
+		// Move the cursor left.
+		ie.moveCursorHorizontal(-1, true /*pastLastCharAllowed*/)
+		return nil
 	case ESC_KEY:
 		// Swap to NORMAL model
 		// Swapping decrements the x-pos by 1.
-		ie.mode = NORMAL_MODE
-		ie.cursorX = ie.normalizeCursorX(ie.cursorX - 1)
+		ie.moveCursorHorizontal(-1, true /*pastLastCharAllowed*/)
 		ie.userMsg = ""
+		ie.swapEditorMode(NORMAL_MODE)
 		return nil
 	case DELETE_KEY:
 		// Delete the char before the cursor.
+		ie.cursorX = ie.normalizeCursorX()
 		ie.deleteChar()
 		return nil
 	default:
 		// Insert a char at the cursor.
+		ie.cursorX = ie.normalizeCursorX()
 		ie.insertChar(ch)
 		return nil
 	}
+}
+
+func (ie *insertModeEditor) GetCursorYX() (int, int) {
+	return ie.cursorY, ie.normalizeCursorX()
+}
+
+func (ie *insertModeEditor) normalizeCursorX() int {
+	x := ie.cursorX
+	// In INSERT mode, it's expected for the cursor to be equal to the length of the current line.
+	if x > len(ie.fileContents[ie.getCurrLineInd()]) {
+		// Special handling of x-position. See moveCursorInternal for details.
+		x = len(ie.fileContents[ie.getCurrLineInd()])
+	}
+	if x < 0 {
+		x = 0
+	}
+	return x
 }
 
 // Handle the user inputting the delete key.
@@ -62,31 +101,17 @@ func (ie *insertModeEditor) deleteChar() {
 	newLine.WriteString(currLine[:ie.cursorX-1])
 	newLine.WriteString(currLine[ie.cursorX:])
 	ie.fileContents[currLineInd] = newLine.String()
-	ie.moveCursorHorizontal(-1)
+	// No need to call the specialized moveCursorHorizontal since we know that cursorX > 0, and we
+	// want to skip the validations for line length, as the deletion case temporarily introduces
+	// a bad state.
+	ie.cursorX -= 1
 }
 
 // Handle the user inputting the ch key.
 func (ie *insertModeEditor) insertChar(ch string) {
 	currLineInd := ie.getCurrLineInd()
 	currLine := ie.fileContents[currLineInd]
-	switch ch {
-	case "down":
-		// Move the cursor down.
-		ie.moveCursorVertical(1)
-		return
-	case "up":
-		// Move the cursor up.
-		ie.moveCursorVertical(-1)
-		return
-	case "right":
-		// Move the cursor right.
-		ie.moveCursorHorizontal(1)
-		return
-	case "left":
-		// Move the cursor left.
-		ie.moveCursorHorizontal(-1)
-		return
-	case "enter":
+	if ch == "enter" {
 		// Upon pressing the "enter" key, the current line is split before and after the x-pos of
 		// the cursor, and:
 		// 1. The "before" part stays on the current line.
@@ -108,5 +133,5 @@ func (ie *insertModeEditor) insertChar(ch string) {
 	newLine.WriteString(ch)
 	newLine.WriteString(currLine[ie.cursorX:])
 	ie.fileContents[currLineInd] = newLine.String()
-	ie.moveCursorHorizontal(1)
+	ie.moveCursorHorizontal(1, true /*pastLastCharAllowed*/)
 }
