@@ -213,11 +213,11 @@ func (e *editorImpl) Close() {
 }
 
 func (e *editorImpl) sync() {
-	defer e.window.Refresh()
-	defer func() {
-		e.window.Move(e.activeEditorMode.GetCursorYX())
-	}()
 	e.updateWindow()
+	// Not sure why we have to Refresh before moving the cursor, but this fixes a bug where the window
+	// looked funky when you move the cursor to x-pos=0 and insert a whitespace.
+	e.window.Refresh()
+	e.window.Move(e.activeEditorMode.GetCursorYX())
 }
 
 func (e *editorImpl) updateWindow() {
