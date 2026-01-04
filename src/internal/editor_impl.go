@@ -32,6 +32,7 @@ const (
 	NORMAL_MODE  Mode = "NORMAL"
 	INSERT_MODE  Mode = "INSERT"
 	COMMAND_MODE Mode = "COMMAND"
+	VISUAL_MODE  Mode = "VISUAL"
 
 	// Escape sequences.
 	ESC_KEY    = "\x1b"
@@ -87,6 +88,8 @@ type editorImpl struct {
 	mode    Mode
 	verbose bool
 
+	// Highlights.
+
 	// Different modes are implemented here.
 	activeEditorMode EditorMode
 }
@@ -105,6 +108,8 @@ func (e *editorImpl) swapEditorMode(mode Mode) {
 	e.mode = mode
 	switch mode {
 	case NORMAL_MODE:
+		e.userMsg = "-- NORMAL --"
+		e.userMsg = "-- NORMAL --"
 		e.activeEditorMode = newNormalEditorMode(e)
 	case INSERT_MODE:
 		e.userMsg = "-- INSERT --"
@@ -112,6 +117,9 @@ func (e *editorImpl) swapEditorMode(mode Mode) {
 	case COMMAND_MODE:
 		e.userMsg = ":"
 		e.activeEditorMode = newCommandEditorMode(e, e.cursorY, e.cursorX)
+	case VISUAL_MODE:
+		e.userMsg = "-- VISUAL --"
+		e.activeEditorMode = newVisualModeEditor(e, e.cursorY, e.cursorX)
 	}
 }
 
@@ -230,16 +238,18 @@ func (e *editorImpl) updateWindow() {
 	for i := 0; i <= e.getMaxYForContent(); i++ {
 		// We reserve the bottom 2 lines for user messages, and debug messages.
 		if i+e.fileLineOffset < len(e.fileContents) {
-			line := e.fileContents[e.fileLineOffset+i]
-			newWindow.Println(line)
+			// Print char by char.
+			for j, ch := range e.fileContents[e.fileLineOffset+i] {
+				newWindow.AddChar(e.activeEditorMode.GetChar(ch, i, j))
+			}
+			newWindow.AddChar(gc.Char('\n'))
 		} else if (e.verbose && i < maxY-2) || (!e.verbose && i < maxY-1) {
 			// There are no more file contents, so use a special UI to denote that these lines are
 			// not present in the file.
 			// We need to reserve either 1 or 2 lines without this UI treatment. 1 if there is no
 			// debug message, 2 otherwise.
-			newWindow.AttrOn(gc.A_DIM)
-			newWindow.Println("~")
-			newWindow.AttrOff(gc.A_DIM)
+			newWindow.AddChar(gc.A_DIM | gc.Char('~'))
+			newWindow.AddChar(gc.Char('\n'))
 		}
 	}
 	if e.verbose {
@@ -282,6 +292,11 @@ func (e *editorImpl) getMaxYForContent() int {
 	// We reserve the bottom 2 lines for debug and user messages. Then we subtract 1 more since this
 	// is an offset.
 	return maxY - 3
+}
+
+func (e *editorImpl) GetChar(ch rune, _ int, _ int) gc.Char {
+	// Default implementation: no special UI treatment.
+	return gc.Char(ch)
 }
 
 // Each string is the entire row. The row does NOT contain the ending newline.

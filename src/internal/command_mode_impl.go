@@ -68,6 +68,10 @@ func (ce *commandModeEditor) handleCommandEntered(command string) error {
 		// Quit the program.
 		ce.Close()
 		return io.EOF
+	case "debug":
+		// Toggle debug mode.
+		ce.verbose = !ce.verbose
+		return nil
 	default:
 		ce.userMsg = fmt.Sprintf("unrecognized command: %s", command)
 		return nil

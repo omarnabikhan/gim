@@ -48,10 +48,6 @@ func (ne *normalModeEditor) Handle(key gc.Key) error {
 		// Move the cursor to the lowest valid position without scrolling.
 		ne.cursorY = ne.normalizeCursorY(ne.getMaxYForContent())
 		return nil
-	case "v":
-		// Toggle verbose mode.
-		ne.verbose = !ne.verbose
-		return nil
 	case "o":
 		// Insert an empty line after the current line, and swap to INSERT mode.
 		currLineInd := ne.getCurrLineInd()
@@ -88,6 +84,10 @@ func (ne *normalModeEditor) Handle(key gc.Key) error {
 	case "i":
 		// Swap to INSERT mode.
 		ne.swapEditorMode(INSERT_MODE)
+		return nil
+	case "v":
+		// Swap to VISUAL mode.
+		ne.swapEditorMode(VISUAL_MODE)
 		return nil
 	case ":":
 		// Swap to COMMAND mode.
